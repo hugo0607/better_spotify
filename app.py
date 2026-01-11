@@ -7,14 +7,6 @@ import requests
 import base64
 import random
 
-'''
-TODO: Hay un pequeño error de que cuando termina una canción, al poner la siguiente como
-que salta una por algún motivo. Entonces se escucha durante 1 seg otra y al final obligas
-a que carge esa además de que queda mal xd.
-
-'''
-
-
 # ============================================
 # CONFIGURACIÓN DE PÁGINA
 # ============================================
@@ -214,21 +206,29 @@ def inject_autoplay_script():
     """Inyecta JavaScript para reproducción automática"""
     autoplay_js = """
     <script>
-    // Acceder al documento padre (fuera del iframe)
+    let isProcessing = false; // Flag para evitar ejecuciones simultáneas
+    
     setTimeout(() => {
-        function checkAndPlayNext() {
+        function setupAudioListener() {
             try {
-                // Acceder al DOM del padre desde el iframe
                 const parentDoc = window.parent.document;
                 const audio = parentDoc.querySelector('audio.stAudio');
                 
-                console.log('Audio encontrado:', audio ? 'SÍ' : 'NO');
-                
-                if (audio) {
-                    console.log('Ended:', audio.ended, 'Duration:', audio.duration);
+                if (audio && !audio.hasAttribute('data-listener-added')) {
+                    console.log('✅ Audio encontrado, configurando listener...');
                     
-                    if (audio.ended) {
-                        console.log('Audio terminado, buscando botón...');
+                    // Marcar que ya tiene listener para no duplicar
+                    audio.setAttribute('data-listener-added', 'true');
+                    
+                    // Evento cuando termina el audio
+                    audio.addEventListener('ended', function() {
+                        if (isProcessing) {
+                            console.log('⏳ Ya hay una ejecución en proceso, saltando...');
+                            return;
+                        }
+                        
+                        isProcessing = true;
+                        console.log('🎵 Audio terminado, buscando siguiente...');
                         
                         const buttons = Array.from(parentDoc.querySelectorAll('button'));
                         const nextButton = buttons.find(btn => 
@@ -236,25 +236,64 @@ def inject_autoplay_script():
                         );
                         
                         if (nextButton) {
-                            console.log('Haciendo clic...');
+                            console.log('🔘 Haciendo clic en siguiente...');
                             nextButton.click();
                             
+                            // Esperar 4 segundos antes de reproducir (2s para cargar + 2s extra)
                             setTimeout(() => {
                                 const newAudio = parentDoc.querySelector('audio.stAudio');
                                 if (newAudio) {
-                                    newAudio.play().catch(e => console.log('Error:', e));
+                                    // Remover el atributo del audio anterior
+                                    const oldAudios = parentDoc.querySelectorAll('audio[data-listener-added]');
+                                    oldAudios.forEach(a => {
+                                        if (a !== newAudio) {
+                                            a.removeAttribute('data-listener-added');
+                                        }
+                                    });
+                                    
+                                    newAudio.play()
+                                        .then(() => {
+                                            console.log('▶️ Reproduciendo nuevo audio');
+                                            isProcessing = false;
+                                            // Configurar listener para el nuevo audio
+                                            setupAudioListener();
+                                        })
+                                        .catch(e => {
+                                            console.log('❌ Error reproduciendo:', e);
+                                            isProcessing = false;
+                                            setupAudioListener();
+                                        });
+                                } else {
+                                    console.log('⚠️ No se encontró nuevo audio');
+                                    isProcessing = false;
+                                    setupAudioListener();
                                 }
                             }, 4000);
+                        } else {
+                            console.log('⚠️ No se encontró botón siguiente');
+                            isProcessing = false;
                         }
-                    }
+                    });
+                    
+                    console.log('✅ Listener configurado correctamente');
                 }
             } catch(e) {
-                console.log('Error accediendo al padre:', e);
+                console.log('❌ Error:', e);
+                isProcessing = false;
             }
         }
         
-        setInterval(checkAndPlayNext, 2000);
-        console.log('✅ Autoplay activado (accediendo a parent)');
+        // Configurar el listener inicial
+        setupAudioListener();
+        
+        // Verificar periódicamente por si se carga nuevo audio
+        setInterval(() => {
+            if (!isProcessing) {
+                setupAudioListener();
+            }
+        }, 3000);
+        
+        console.log('✅ Sistema de autoplay activado');
     }, 3000);
     </script>
     """
