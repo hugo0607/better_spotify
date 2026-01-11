@@ -7,6 +7,20 @@ import requests
 import base64
 import random
 
+
+
+##################### APAÑO PARA EJECUTARLO CON RENDER #####################
+
+import toml
+
+# Cargar secrets desde archivo alternativo si existe
+if os.path.exists("secrets.toml") and not os.path.exists(".streamlit/secrets.toml"):
+    secrets_data = toml.load("secrets.toml")
+    # Inyectar en st.secrets
+    st.secrets.update(secrets_data)
+
+############################################################################
+
 # ============================================
 # CONFIGURACIÓN DE PÁGINA
 # ============================================
