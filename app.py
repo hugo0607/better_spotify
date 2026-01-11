@@ -7,19 +7,39 @@ import requests
 import base64
 import random
 
-
-
-##################### APAÑO PARA EJECUTARLO CON RENDER #####################
-
-import toml
-
-# Cargar secrets desde archivo alternativo si existe
-if os.path.exists("secrets.toml") and not os.path.exists(".streamlit/secrets.toml"):
-    secrets_data = toml.load("secrets.toml")
-    # Inyectar en st.secrets
-    st.secrets.update(secrets_data)
-
-############################################################################
+# ============================================
+# CONFIGURACIÓN DE SECRETS (Compatible con Render)
+# ============================================
+def get_secret(key, default=None):
+    """
+    Obtiene un secret desde múltiples fuentes en orden de prioridad:
+    1. Variables de entorno (para Render)
+    2. st.secrets (para desarrollo local)
+    3. /etc/secrets/ (para Render con archivos)
+    """
+    # 1. Intentar desde variables de entorno
+    env_value = os.getenv(key)
+    if env_value:
+        return env_value
+    
+    # 2. Intentar desde st.secrets
+    try:
+        return st.secrets[key]
+    except (KeyError, FileNotFoundError):
+        pass
+    
+    # 3. Intentar desde /etc/secrets/secrets.toml (Render)
+    try:
+        import toml
+        secrets_path = f"/etc/secrets/secrets.toml"
+        if os.path.exists(secrets_path):
+            secrets_data = toml.load(secrets_path)
+            if key in secrets_data:
+                return secrets_data[key]
+    except:
+        pass
+    
+    return default
 
 # ============================================
 # CONFIGURACIÓN DE PÁGINA
@@ -35,7 +55,7 @@ st.set_page_config(
 # ============================================
 def check_access():
     """Verifica acceso con código persistente en sesión"""
-    SECRET_CODE = st.secrets.get("ACCESS_CODE", "mi_codigo_secreto_123")
+    SECRET_CODE = get_secret("ACCESS_CODE", "mi_codigo_secreto_123")
     
     # Si ya está autenticado en esta sesión
     if st.session_state.get("authenticated", False):
@@ -73,15 +93,15 @@ def get_b2_client():
     """Crea cliente de Backblaze B2"""
     return boto3.client(
         's3',
-        endpoint_url=st.secrets["B2_ENDPOINT"],
-        aws_access_key_id=st.secrets["B2_KEY_ID"],
-        aws_secret_access_key=st.secrets["B2_APP_KEY"]
+        endpoint_url=get_secret("B2_ENDPOINT"),
+        aws_access_key_id=get_secret("B2_KEY_ID"),
+        aws_secret_access_key=get_secret("B2_APP_KEY")
     )
 
 def list_playlists():
     """Lista todas las carpetas (playlists) en el bucket"""
     b2 = get_b2_client()
-    bucket = st.secrets["B2_BUCKET"]
+    bucket = get_secret("B2_BUCKET")
     
     response = b2.list_objects_v2(Bucket=bucket, Delimiter='/')
     playlists = []
@@ -95,7 +115,7 @@ def list_playlists():
 def list_songs_in_playlist(playlist_name):
     """Lista todas las canciones en una playlist"""
     b2 = get_b2_client()
-    bucket = st.secrets["B2_BUCKET"]
+    bucket = get_secret("B2_BUCKET")
     
     response = b2.list_objects_v2(Bucket=bucket, Prefix=f"{playlist_name}/")
     songs = []
@@ -111,7 +131,7 @@ def list_songs_in_playlist(playlist_name):
 def get_song_data(key):
     """Descarga la canción y devuelve los bytes"""
     b2 = get_b2_client()
-    bucket = st.secrets["B2_BUCKET"]
+    bucket = get_secret("B2_BUCKET")
     
     response = b2.get_object(Bucket=bucket, Key=key)
     return response['Body'].read()
@@ -119,7 +139,7 @@ def get_song_data(key):
 def upload_song_to_b2(file_path, playlist_name):
     """Sube una canción a B2"""
     b2 = get_b2_client()
-    bucket = st.secrets["B2_BUCKET"]
+    bucket = get_secret("B2_BUCKET")
     filename = os.path.basename(file_path)
     key = f"{playlist_name}/{filename}"
     
@@ -131,8 +151,8 @@ def upload_song_to_b2(file_path, playlist_name):
 # ============================================
 def get_spotify_access_token():
     """Obtiene token de acceso para la API de Spotify"""
-    client_id = st.secrets["SPOTIFY_CLIENT_ID"]
-    client_secret = st.secrets["SPOTIFY_CLIENT_SECRET"]
+    client_id = get_secret("SPOTIFY_CLIENT_ID")
+    client_secret = get_secret("SPOTIFY_CLIENT_SECRET")
     
     credentials = f"{client_id}:{client_secret}"
     encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
@@ -460,19 +480,27 @@ with st.sidebar:
     st.header("ℹ️ Configuración")
     
     st.markdown("""
-    ### Secrets necesarios
+    ### Para Render (Variables de Entorno)
     
-    `.streamlit/secrets.toml`:
+    Agrega estas variables en el dashboard de Render:
+    
+    - `B2_ENDPOINT`
+    - `B2_KEY_ID`
+    - `B2_APP_KEY`
+    - `B2_BUCKET`
+    - `SPOTIFY_CLIENT_ID`
+    - `SPOTIFY_CLIENT_SECRET`
+    - `ACCESS_CODE`
+    
+    ### Para local (.streamlit/secrets.toml)
     
     ```toml
-    # Backblaze B2
     B2_ENDPOINT = "https://s3.eu-central-003.backblazeb2.com"
     B2_KEY_ID = "tu_key_id"
     B2_APP_KEY = "tu_app_key"
     B2_BUCKET = "songs-bucket-app"
-    
-    # Spotify
     SPOTIFY_CLIENT_ID = "tu_client_id"
     SPOTIFY_CLIENT_SECRET = "tu_client_secret"
+    ACCESS_CODE = "mi_codigo_secreto_123"
     ```
     """)
