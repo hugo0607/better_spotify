@@ -244,7 +244,7 @@ def inject_autoplay_script():
                                 if (newAudio) {
                                     newAudio.play().catch(e => console.log('Error:', e));
                                 }
-                            }, 2000);
+                            }, 4000);
                         }
                     }
                 }
