@@ -216,91 +216,184 @@ def inject_autoplay_script():
     let isProcessing = false; // Flag para evitar ejecuciones simultáneas
     
     setTimeout(() => {
-        function setupAudioListener() {
-            try {
-                const parentDoc = window.parent.document;
-                const audio = parentDoc.querySelector('audio.stAudio');
-                
-                if (audio && !audio.hasAttribute('data-listener-added')) {
-                    console.log('✅ Audio encontrado, configurando listener...');
-                    
-                    // Marcar que ya tiene listener para no duplicar
-                    audio.setAttribute('data-listener-added', 'true');
-                    
-                    // Evento cuando termina el audio
-                    audio.addEventListener('ended', function() {
-                        if (isProcessing) {
-                            console.log('⏳ Ya hay una ejecución en proceso, saltando...');
-                            return;
-                        }
-                        
-                        isProcessing = true;
-                        console.log('🎵 Audio terminado, buscando siguiente...');
-                        
-                        const buttons = Array.from(parentDoc.querySelectorAll('button'));
-                        const nextButton = buttons.find(btn => 
-                            (btn.textContent || '').includes('🔀')
-                        );
-                        
-                        if (nextButton) {
-                            console.log('🔘 Haciendo clic en siguiente...');
-                            nextButton.click();
-                            
-                            // Esperar 4 segundos antes de reproducir (2s para cargar + 2s extra)
-                            setTimeout(() => {
-                                const newAudio = parentDoc.querySelector('audio.stAudio');
-                                if (newAudio) {
-                                    // Remover el atributo del audio anterior
-                                    const oldAudios = parentDoc.querySelectorAll('audio[data-listener-added]');
-                                    oldAudios.forEach(a => {
-                                        if (a !== newAudio) {
-                                            a.removeAttribute('data-listener-added');
-                                        }
-                                    });
-                                    
-                                    newAudio.play()
-                                        .then(() => {
-                                            console.log('▶️ Reproduciendo nuevo audio');
-                                            isProcessing = false;
-                                            // Configurar listener para el nuevo audio
-                                            setupAudioListener();
-                                        })
-                                        .catch(e => {
-                                            console.log('❌ Error reproduciendo:', e);
-                                            isProcessing = false;
-                                            setupAudioListener();
-                                        });
-                                } else {
-                                    console.log('⚠️ No se encontró nuevo audio');
-                                    isProcessing = false;
-                                    setupAudioListener();
-                                }
-                            }, 4000);
-                        } else {
-                            console.log('⚠️ No se encontró botón siguiente');
-                            isProcessing = false;
-                        }
-                    });
-                    
-                    console.log('✅ Listener configurado correctamente');
-                }
-            } catch(e) {
-                console.log('❌ Error:', e);
-                isProcessing = false;
+        const parentDoc = window.parent.document;
+        
+        // ==========================================
+        // FUNCIÓN 1: Solo presiona el botón "Siguiente"
+        // Esta función puede ser llamada por el usuario o por el listener de 'ended'
+        // ==========================================
+        function pressNextButton() {
+            console.log('🔘 Intentando presionar botón siguiente...');
+            
+            const buttons = Array.from(parentDoc.querySelectorAll('button'));
+            const nextButton = buttons.find(btn => 
+                (btn.textContent || '').includes('🔀')
+            );
+            
+            if (nextButton) {
+                nextButton.click();
+                console.log('✅ Botón "Siguiente" presionado');
+            } else {
+                console.log('⚠️ No se encontró el botón "Siguiente"');
             }
         }
         
-        // Configurar el listener inicial
+        // ==========================================
+        // FUNCIÓN 2: Espera a que el audio esté cargado y lo reproduce
+        // Se ejecuta cuando el botón es presionado (por usuario o por JS)
+        // ==========================================
+        function waitForAudioAndPlay() {
+            if (isProcessing) {
+                console.log('⏳ Ya hay un proceso de carga en curso, ignorando...');
+                return;
+            }
+            
+            isProcessing = true;
+            console.log('🔄 Esperando a que el audio aparezca y se cargue completamente...');
+            
+            const maxAttempts = 40; // 40 intentos x 200ms = 8 segundos máximo
+            let attempts = 0;
+            
+            const checkInterval = setInterval(() => {
+                attempts++;
+                const audio = parentDoc.querySelector('audio.stAudio');
+                
+                if (audio) {
+                    console.log(`🎵 Audio encontrado (intento ${attempts}). Estado: readyState=${audio.readyState}`);
+                    
+                    // readyState 4 = HAVE_ENOUGH_DATA (100% cargado)
+                    if (audio.readyState >= 4) {
+                        console.log('✅ Audio 100% cargado (readyState: 4 - HAVE_ENOUGH_DATA)');
+                        clearInterval(checkInterval);
+                        
+                        // Esperar 1 segundo adicional como seguridad
+                        setTimeout(() => {
+                            audio.play()
+                                .then(() => {
+                                    console.log('▶️ Reproducción iniciada correctamente');
+                                    isProcessing = false;
+                                })
+                                .catch(err => {
+                                    console.log('⚠️ Error al reproducir:', err);
+                                    isProcessing = false;
+                                });
+                        }, 1000);
+                        
+                    } else if (audio.readyState >= 3) {
+                        // readyState 3 = HAVE_FUTURE_DATA (suficiente para empezar)
+                        console.log('⚡ Audio listo para reproducir (readyState: 3 - HAVE_FUTURE_DATA)');
+                        clearInterval(checkInterval);
+                        
+                        setTimeout(() => {
+                            audio.play()
+                                .then(() => {
+                                    console.log('▶️ Reproducción iniciada (readyState 3)');
+                                    isProcessing = false;
+                                })
+                                .catch(err => {
+                                    console.log('⚠️ Error al reproducir:', err);
+                                    isProcessing = false;
+                                });
+                        }, 1000);
+                    } else {
+                        console.log(`⏳ Audio aún cargando (readyState: ${audio.readyState})`);
+                    }
+                } else {
+                    console.log(`⏳ Intento ${attempts}/${maxAttempts}: Audio no encontrado aún`);
+                }
+                
+                if (attempts >= maxAttempts) {
+                    console.log('❌ Timeout: El audio no se cargó en el tiempo esperado');
+                    clearInterval(checkInterval);
+                    isProcessing = false;
+                }
+            }, 200);
+        }
+        
+        // ==========================================
+        // LISTENER DEL BOTÓN: Se ejecuta cuando se pulsa (usuario o JS)
+        // ==========================================
+        function setupButtonListener() {
+            const buttons = Array.from(parentDoc.querySelectorAll('button'));
+            const nextButton = buttons.find(btn => 
+                (btn.textContent || '').includes('🔀')
+            );
+            
+            if (nextButton && !nextButton.hasAttribute('data-listener-added')) {
+                nextButton.setAttribute('data-listener-added', 'true');
+                
+                nextButton.addEventListener('click', () => {
+                    console.log('🖱️ Botón "Siguiente" presionado (usuario o JS)');
+                    console.log('🎯 Iniciando espera de carga de audio...');
+                    
+                    // Pequeño delay para que Streamlit procese el cambio
+                    setTimeout(() => {
+                        waitForAudioAndPlay();
+                    }, 4000);
+                });
+                
+                console.log('✅ Listener del botón "Siguiente" configurado');
+            }
+        }
+        
+        // ==========================================
+        // LISTENER DEL AUDIO: Detecta cuando termina la canción
+        // ==========================================
+        function setupAudioListener() {
+            try {
+                const audio = parentDoc.querySelector('audio.stAudio');
+                
+                if (audio && !audio.hasAttribute('data-ended-listener')) {
+                    audio.setAttribute('data-ended-listener', 'true');
+                    
+                    audio.addEventListener('ended', () => {
+                        console.log('🎵 Canción terminada, activando siguiente...');
+                        pressNextButton();
+                    });
+                    
+                    console.log('✅ Listener de "ended" del audio configurado');
+                }
+            } catch(e) {
+                console.log('❌ Error configurando listener de audio:', e);
+            }
+        }
+        
+        // ==========================================
+        // MUTATION OBSERVER: Detecta cambios en el DOM
+        // ==========================================
+        const observer = new MutationObserver((mutations) => {
+            // Reconfigurar listeners si aparecen nuevos elementos
+            setTimeout(() => {
+                setupButtonListener();
+                setupAudioListener();
+            }, 500);
+        });
+        
+        // Observar cambios en el contenedor principal
+        const mainContainer = parentDoc.querySelector('[data-testid="stAppViewContainer"]');
+        if (mainContainer) {
+            observer.observe(mainContainer, { 
+                childList: true, 
+                subtree: true
+            });
+            console.log('✅ Observer del DOM configurado');
+        }
+        
+        // ==========================================
+        // INICIALIZACIÓN
+        // ==========================================
+        setupButtonListener();
         setupAudioListener();
         
-        // Verificar periódicamente por si se carga nuevo audio
+        // Verificar periódicamente por si se necesita reconfigurar
         setInterval(() => {
             if (!isProcessing) {
+                setupButtonListener();
                 setupAudioListener();
             }
         }, 3000);
         
-        console.log('✅ Sistema de autoplay activado');
+        console.log('✅ Sistema de autoplay activado completamente');
     }, 3000);
     </script>
     """
